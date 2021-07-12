@@ -1,0 +1,134 @@
+---
+title: "Multiomics2"
+author: "fdelogu"
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+output: pdf_document
+---
+
+```{r Load r libraries, results='hide', message=F, warning=F}
+
+library(tidyverse)
+library(matrixStats)
+library(ggtree)
+library(ape)
+
+options(stringsAsFactors=F)
+
+wd <- paste0(getwd(), "/")
+
+```
+
+## Load data
+
+```{r Load data}
+
+gene_map <- read_tsv(paste0(wd, "gene_map.txt"), col_names=F) %>%
+  `colnames<-`(c("ORF", "ORF_alias", "contig", "Bin")) %>%
+  mutate(Bin=replace_na(Bin, "Unbinned"))
+RNA.expr <- read.table(paste0(wd, "results/RNA_ALL.csv"), header=T, row.names=1, sep=",")
+protein.expr <- read.csv(paste0(wd, "results/protein_ALL.csv"), header=T, row.names=1)
+
+colnames(RNA.expr) <- gsub(".", ";", colnames(RNA.expr), fixed=T)
+colnames(protein.expr) <- gsub(".", ";", colnames(protein.expr), fixed=T)
+
+```
+
+# ORFGs taxa
+
+```{r ORFG mat}
+
+bins <- unique(gene_map$Bin)
+
+MT.ORFG.mat <- matrix(rep(0, length(bins)**2), ncol=length(bins))
+colnames(MT.ORFG.mat) <- bins
+rownames(MT.ORFG.mat) <- bins
+
+MT.ORFG <- colnames(RNA.expr)[grepl(";", colnames(RNA.expr))]
+
+for(i in MT.ORFG){
+  ORFG.tmp <- unlist(strsplit(i, ";"))
+  for(j in ORFG.tmp){
+    for(k in ORFG.tmp){
+      if(k!=j){
+        bin1 <- gene_map[gene_map$ORF_alias==j,]$Bin
+        bin2 <- gene_map[gene_map$ORF_alias==k,]$Bin
+        if(!is.na(bin1) && !is.na(bin2)){
+          MT.ORFG.mat[bin1, bin2] = MT.ORFG.mat[bin1, bin2] + 1
+        }
+      }
+    }
+  }
+}
+diag(MT.ORFG.mat) <- diag(MT.ORFG.mat)/2
+
+
+MP.ORFG.mat <- matrix(rep(0, length(bins)**2), ncol=length(bins))
+colnames(MP.ORFG.mat) <- bins
+rownames(MP.ORFG.mat) <- bins
+
+MP.ORFG <- colnames(protein.expr)[grepl(";", colnames(protein.expr))]
+
+for(i in MP.ORFG){
+  ORFG.tmp <- unlist(str_split(i, ";"))
+  for(j in ORFG.tmp){
+    for(k in ORFG.tmp){
+      if(k!=j){
+        bin1 <- gene_map[gene_map$ORF_alias==j,]$Bin
+        bin2 <- gene_map[gene_map$ORF_alias==k,]$Bin
+        if(!is.na(bin1) && !is.na(bin2)){
+          MP.ORFG.mat[bin1, bin2] = MP.ORFG.mat[bin1, bin2] + 1
+        }
+      }
+    }
+  }
+}
+diag(MP.ORFG.mat) <- diag(MP.ORFG.mat)/2
+
+MT.ORFG.mat
+MP.ORFG.mat
+
+```
+
+## Make plots
+
+```{r ORFG plot}
+tmp <- log10(MP.ORFG.mat+1)
+tmp <- abs(tmp/max(tmp))
+tmp <- 1-tmp
+hc <- hclust(as.dist(tmp))
+plot(hc)
+
+tree_plot <- ggtree(as.phylo(hc)) +
+  geom_tree() +
+  scale_x_reverse() +
+  scale_y_reverse() +
+  coord_flip() +
+  geom_treescale(x=0, y=-1) +
+  geom_tiplab(size=3, aes(angle=90), offset=-0.1)
+
+plot.ORFGs <- rbind(as.data.frame(MT.ORFG.mat) %>%
+  rownames_to_column(var="bin1") %>%
+  gather(key="bin2", value="value", -bin1) %>%
+  mutate(molecule="RNA"),
+  as.data.frame(MP.ORFG.mat) %>%
+    rownames_to_column(var="bin1") %>%
+    gather(key="bin2", value="value", -bin1) %>%
+    mutate(molecule="protein")) %>%
+  ggplot(aes(x=factor(bin1, levels=rev(hc$labels[hc$order])),
+             y=factor(bin2, levels=rev(hc$labels[hc$order])),
+             size=ifelse(value==0, NA, log10(value)),
+             color=molecule)) +
+  geom_point() +
+  theme_classic() +
+  facet_wrap(.~factor(molecule, levels=c("RNA", "protein"))) +
+  guides(color=guide_legend(title="Molecule"), size=guide_legend(title="log10(#ORFs)")) +
+  labs(x="GC content", y="log(coverage)") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+tree_plot
+plot.ORFGs
+
+ggsave(paste0(wd, "results/tree_plot.png"), tree_plot, dpi=320, height=5, width=10)
+ggsave(paste0(wd, "results/ORFGs_plot.png"), plot.ORFGs, dpi=320, height=5, width=12)
+
+```

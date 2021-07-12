@@ -1,0 +1,216 @@
+---
+title: "Multiomics4"
+author: "fdelogu"
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+output: pdf_document
+---
+
+```{r Load r libraries, results='hide', message=F, warning=F}
+
+library(tidyverse)
+
+options(stringsAsFactors=F)
+
+wd <- paste0(getwd(), "/")
+
+```
+
+### Save urls
+
+```{r define ulrs}
+
+ko.url <- "https://github.com/fdelogu/kegg_net/raw/master/results/ko.txt"
+
+```
+
+### Download the premade metabolic netowrk and annotation 
+
+```{r download premade matrix and annotation}
+
+download.file(ko.url, paste0(wd, "ko.txt"))
+
+```
+
+## Load data
+
+```{r Load data}
+
+KeggMap <- read.table("ko.txt", sep="\t", header=T,
+                      colClasses=rep("character", 9), encoding="UTF-8", fill=T, quote="") %>%
+  `colnames<-`(str_replace(colnames(.), "_", ".")) %>%
+  mutate_all(trimws) %>%
+  filter(A.name!="Brite Hierarchies")
+
+gene_map <- read_tsv(paste0(wd, "gene_map.txt"), col_names=F) %>%
+  `colnames<-`(c("ORF", "ORF_alias", "contig", "Bin")) %>%
+  mutate(Bin=replace_na(Bin, "Unbinned"))
+
+ORF_converter <- gene_map$ORF_alias
+names(ORF_converter) <- gene_map$ORF
+
+RNA.expr <- read.table(paste0(wd, "results/RNA_ALL.csv"), header=T, row.names=1, sep=",")
+protein.expr <- read.csv(paste0(wd, "results/protein_ALL.csv"), header=T, row.names=1)
+
+colnames(RNA.expr) <- gsub(".", ";", colnames(RNA.expr), fixed=T)
+colnames(protein.expr) <- gsub(".", ";", colnames(protein.expr), fixed=T)
+
+ann.tab <- read_tsv(paste0(wd, "InterProScan_CAZy_fromGalaxy.txt")) %>%
+  mutate(ORF_alias=ORF_converter[Accn])
+
+KeggAnnotation <- ann.tab %>%
+  select(ORF_alias, KEGG) %>%
+  `colnames<-`(c("ORF", "Kcode")) %>%
+  mutate(ORF_alias=ORF, Kcode=toupper(str_remove(Kcode, "o"))) %>%
+  separate_rows(Kcode, sep=";") %>%
+  filter(!is.na(Kcode))
+
+kegg.MG <- inner_join(KeggAnnotation, (gene_map %>% select(-ORF)), by="ORF_alias")
+
+write.csv(kegg.MG, file=paste0(wd, "results/ORF_KO_bin.csv"), row.names=F)
+
+RNA.ORFG.KOs <- read.table(paste0(wd, "results/RNA_ORFG_KOs.txt"), header=T) %>%
+  `colnames<-`(c("ORF", "Kcode")) %>%
+  mutate(ORF_alias=ORF, Kcode=toupper(str_remove(Kcode, "o"))) %>%
+  separate_rows(Kcode, sep=";") %>%
+  filter(!is.na(Kcode))
+protein.ORFG.KOs <- read.table(paste0(wd, "results/protein_ORFG_KOs.txt"), header=T) %>%
+  `colnames<-`(c("ORF", "Kcode")) %>%
+  mutate(ORF_alias=ORF, Kcode=toupper(str_remove(Kcode, "o"))) %>%
+  separate_rows(Kcode, sep=";") %>%
+  filter(!is.na(Kcode))
+
+```
+
+## MG kegg plot
+
+```{r MG kegg plot}
+
+kegg.MG_split <- inner_join((kegg.MG %>% mutate(D.code=Kcode)), KeggMap, by="D.code")
+
+C.order <- kegg.MG_split %>%
+  group_by(C.name) %>%
+  summarise(n=n()) %>%
+  filter(n>50) %>%
+  arrange(desc(n)) %>%
+  dplyr::select(C.name)
+
+kegg.MG_split %>%
+  filter(Bin!="NA") %>%
+  group_by(Bin, C.name) %>%
+  summarise(n=n()) %>%
+  filter(C.name%in%C.order$C.name) %>%
+  arrange(desc(n)) %>%
+  ggplot(aes(x=factor(C.name, levels=rev(C.order$C.name)), y=n, fill=Bin)) +
+  geom_bar(stat="identity") +
+  coord_flip() +
+  labs(x="Kegg Ontology category", y="Count", title="Functional potential: Kegg Ontology (n>50)") +
+  guides(fill=guide_legend(title="Genome")) +
+  theme_classic()
+
+```
+
+```{r MT kegg}
+
+kegg.MT_split <- inner_join(inner_join((RNA.ORFG.KOs %>% mutate(D.code=Kcode) %>% separate_rows(ORF, sep=";")), (gene_map %>% select(-ORF) %>% mutate(ORF=ORF_alias) %>% select(-ORF_alias)), by="ORF"), KeggMap, by="D.code")
+
+C.order <- kegg.MT_split %>%
+  group_by(C.name) %>%
+  summarise(n=n()) %>%
+  filter(n>50) %>%
+  arrange(desc(n)) %>%
+  dplyr::select(C.name)
+
+kegg.MT_split %>%
+  filter(Bin!="NA") %>%
+  group_by(Bin, C.name) %>%
+  summarise(n=n()) %>%
+  filter(C.name%in%C.order$C.name) %>%
+  arrange(desc(n)) %>%
+  ggplot(aes(x=factor(C.name, levels=rev(C.order$C.name)), y=n, fill=Bin)) +
+  geom_bar(stat="identity") +
+  coord_flip() +
+  labs(x="Kegg Ontology category", y="Count", title="Functional potential: Kegg Ontology (n>50)") +
+  guides(fill=guide_legend(title="Genome")) +
+  theme_classic()
+
+```
+
+```{r MP kegg}
+
+kegg.MP_split <- inner_join(inner_join((protein.ORFG.KOs %>% mutate(D.code=Kcode) %>% separate_rows(ORF, sep=";")), (gene_map %>% select(-ORF) %>% mutate(ORF=ORF_alias) %>% select(-ORF_alias)), by="ORF"), KeggMap, by="D.code")
+
+C.order <- kegg.MP_split %>%
+  group_by(C.name) %>%
+  summarise(n=n()) %>%
+  filter(n>50) %>%
+  arrange(desc(n)) %>%
+  dplyr::select(C.name)
+
+kegg.MP_split %>%
+  filter(Bin!="NA") %>%
+  group_by(Bin, C.name) %>%
+  summarise(n=n()) %>%
+  filter(C.name%in%C.order$C.name) %>%
+  arrange(desc(n)) %>%
+  ggplot(aes(x=factor(C.name, levels=rev(C.order$C.name)), y=n, fill=Bin)) +
+  geom_bar(stat="identity") +
+  coord_flip() +
+  labs(x="Kegg Ontology category", y="Count", title="Functional potential: Kegg Ontology (n>50)") +
+  guides(fill=guide_legend(title="Genome")) +
+  theme_classic()
+
+```
+
+```{r MO kegg}
+
+C.order <- kegg.MG_split %>%
+  group_by(C.name) %>%
+  summarise(n=n()) %>%
+  filter(n>50) %>%
+  arrange(desc(n)) %>%
+  dplyr::select(C.name)
+
+kegg.MO_split <- rbind(cbind(kegg.MG_split, Omic=rep("MG", nrow(kegg.MG_split))),
+                       cbind(kegg.MT_split[,colnames(kegg.MG_split)], Omic=rep("MT", nrow(kegg.MT_split))),
+                       cbind(kegg.MP_split[,colnames(kegg.MG_split)], Omic=rep("MP", nrow(kegg.MP_split))))
+
+plot.MO.Kegg <- kegg.MO_split %>%
+  filter(Bin!="NA") %>%
+  group_by(Bin, C.name, Omic) %>%
+  summarise(n=n()) %>%
+  filter(C.name%in%C.order$C.name) %>%
+  arrange(desc(n)) %>%
+  ggplot(aes(x=factor(C.name, levels=rev(C.order$C.name)), y=n, fill=Bin)) +
+  geom_bar(stat="identity") +
+  coord_flip() +
+  labs(x="Kegg Ontology category", y="Count", title="KEGG Ontology hits (n>50 on MG)") +
+  guides(fill=guide_legend(title="Genome")) +
+  theme_classic() +
+  facet_grid(.~factor(Omic, levels=c("MG", "MT", "MP")), scales="free", space="free") +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  scale_y_continuous(breaks=1:10*50)
+
+plot.MO.Kegg
+
+ggsave(paste0(wd, "results/MO_Kegg.pdf"), plot.MO.Kegg, height=8, width=12)
+
+```
+
+## Sereis rank correlations
+
+```{r series corr}
+
+MO_series <- kegg.MO_split %>%
+  filter(Bin!="NA") %>%
+  group_by(C.name, Omic) %>%
+  summarise(n=n()) %>%
+  filter(C.name%in%C.order$C.name) %>%
+  arrange(desc(n)) %>%
+  spread(key=Omic, value=n)
+
+cor.test(MO_series$MG, MO_series$MT, method="k")
+cor.test(MO_series$MG, MO_series$MP, method="k")
+cor.test(MO_series$MT, MO_series$MP, method="k")
+
+```
+

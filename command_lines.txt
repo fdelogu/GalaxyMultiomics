@@ -1,0 +1,16 @@
+# Preprocessing script using bash and awk
+
+# Make a map "contig -> bin"
+cd bins
+for i in Bin*.fasta; do j=$(echo $i | awk -F"." '{print $1}'); awk -v var=$j '/>/{print substr($1, 2, length($1))"\t"var}' $i >> contig_map.txt; donefor i in Bin*.fasta; do j=$(echo $i | awk -F"." '{print $1}'); awk -v var=$j '/>/{print substr($1, 2, length($1))"\t"var}' $i >> contig_map.txt; done
+cd ..
+
+# Make a (temporary) map "gene -> contig"
+awk -F"\t" '{a++; if(a>1) print $1}' Kallisto_abundances_all.txt | awk -F"_" '{b++; print $0"\t"$1"_"$2"_"$3"_"$4"_"$5"_"$6}' > tmp_map.txt
+
+# Make a map "gene -> contig -> bin"
+awk 'NR==FNR{a[$1]=$2; next} {b++; print $1"\tORF"b"\t"$2"\t"a[$2]}' bins/contig_map.txt tmp_map.txt > gene_map.txt
+rm tmp_map.txt
+
+
+

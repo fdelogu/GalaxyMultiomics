@@ -1,0 +1,182 @@
+---
+title: "Multiomics3"
+author: "fdelogu"
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+output: pdf_document
+---
+
+```{r Load r libraries, results='hide', message=F, warning=F}
+
+library(tidyverse)
+
+options(stringsAsFactors=F)
+
+wd <- paste0(getwd(), "/")
+
+```
+
+## Load data
+
+```{r Load data}
+
+gene_map <- read_tsv(paste0(wd, "gene_map.txt"), col_names=F) %>%
+  `colnames<-`(c("ORF", "ORF_alias", "contig", "Bin")) %>%
+  mutate(Bin=replace_na(Bin, "Unbinned"))
+
+ORF_converter <- gene_map$ORF_alias
+names(ORF_converter) <- gene_map$ORF
+
+RNA.expr <- read.table(paste0(wd, "results/RNA_ALL.csv"), header=T, row.names=1, sep=",")
+protein.expr <- read.csv(paste0(wd, "results/protein_ALL.csv"), header=T, row.names=1)
+
+colnames(RNA.expr) <- gsub(".", ";", colnames(RNA.expr), fixed=T)
+colnames(protein.expr) <- gsub(".", ";", colnames(protein.expr), fixed=T)
+
+ann.tab <- read_tsv(paste0(wd, "InterProScan_CAZy_fromGalaxy.txt")) %>%
+  mutate(ORF_alias=ORF_converter[Accn])
+
+ko_file <- ann.tab %>%
+  select(ORF_alias, KEGG) %>%
+  separate_rows(KEGG, sep=";") %>%
+  filter(!is.na(KEGG))
+
+caz_file <- ann.tab %>%
+  select(ORF_alias, CAZy) %>%
+  separate_rows(CAZy, sep=";") %>%
+  filter(!is.na(CAZy)) %>%
+  mutate(CAZ_group=case_when(
+    startsWith(CAZy, "GH") ~ "GH",
+    startsWith(CAZy, "CE") ~ "CE",
+    startsWith(CAZy, "GT") ~ "GT",
+    startsWith(CAZy, "CBM") ~ "CBM",
+    startsWith(CAZy, "PL") ~ "PL",
+    startsWith(CAZy, "SLH") ~ "SLH",
+    startsWith(CAZy, "cohesin") ~ "cohesin",
+    startsWith(CAZy, "AA") ~ "AA"
+  ))
+
+```
+
+## Exploration
+
+Plot the number of KO terms per ORF (not annotated ORFs exluded).
+
+```{r Exploration}
+
+ko_file %>%
+  group_by(ORF_alias) %>%
+  summarise(n=n()) %>%
+  group_by(n) %>%
+  summarise(nn=n()) %>%
+  ggplot(aes(x=as.factor(n), y=nn)) +
+  geom_histogram(stat="identity") +
+  labs(x="Number of KEGGs per ORF", y="Counts")
+
+```
+
+## Extract KEGG functions
+
+```{r Extract KEGG functions}
+
+extract.KOs <- function(ORFG, ko.db){
+  # ORFG must be in the form ORF;ORF;ORF...;ORF
+  ORFs.tmp <- unlist(strsplit(ORFG, ";"))
+  ko.db.subset <- ko.db %>%
+    filter(ORF_alias %in% ORFs.tmp)
+  return(as.vector(unique(ko.db.subset$KEGG)))
+}
+
+spread.KOs <- function(ORFG, new.list.KOs){
+  a <- rep(ORFG, length(new.list.KOs))
+  return(cbind(a, new.list.KOs))
+}
+
+check.KO <- function(ORFG, ko.db){
+  KO.subset <- extract.KOs(ORFG, ko.db)
+  if(length(KO.subset)!=0){
+    new.block <- spread.KOs(ORFG, KO.subset)
+  } else {
+    new.block <- c(ORFG, "none")
+  }
+  return(new.block)
+}
+
+collapse.KOs <- function(ORFGs, ko.db){
+  a <- lapply(ORFGs, check.KO, ko.db=ko.db)
+  new.db <- do.call("rbind", a)
+  colnames(new.db) <- c("ORFG", "KO")
+  return(as.data.frame(new.db) %>% filter(KO!="none"))
+}
+
+```
+
+## Extract CAZy functions
+
+```{r Extract CAZy functions}
+
+extract.CAZy <- function(ORFG, CAZy.db){
+  # ORFG must be in the form ORF;ORF;ORF...;ORF
+  ORFs.tmp <- unlist(strsplit(ORFG, ";"))
+  CAZy.db.subset <- CAZy.db %>%
+    filter(ORF_alias %in% ORFs.tmp)
+  return(as.vector(unique(CAZy.db.subset$CAZy)))
+}
+
+spread.CAZy <- function(ORFG, new.list.CAZy){
+  a <- rep(ORFG, length(new.list.CAZy))
+  return(cbind(a, new.list.CAZy))
+}
+
+check.CAZy <- function(ORFG, CAZy.db){
+  CAZy.subset <- extract.CAZy(ORFG, CAZy.db)
+  if(length(CAZy.subset)!=0){
+    new.block <- spread.CAZy(ORFG, CAZy.subset)
+  } else {
+    new.block <- c(ORFG, "none")
+  }
+  return(new.block)
+}
+
+collapse.CAZy <- function(ORFGs, CAZy.db){
+  a <- lapply(ORFGs, check.CAZy, CAZy.db=CAZy.db)
+  new.db <- do.call("rbind", a)
+  colnames(new.db) <- c("ORFG", "CAZy")
+  return(as.data.frame(new.db) %>% filter(CAZy!="none"))
+}
+
+```
+
+## Extract KOs
+
+```{r Extract KOs}
+
+RNA.ORFG.KOs <- collapse.KOs(colnames(RNA.expr), ko_file)
+protein.ORFG.KOs <- collapse.KOs(colnames(protein.expr), ko_file)
+
+write.table(RNA.ORFG.KOs, paste0(wd, "results/RNA_ORFG_KOs.txt"), quote=F, row.names=F)
+write.table(protein.ORFG.KOs, paste0(wd, "results/protein_ORFG_KOs.txt"), quote=F, row.names=F)
+
+```
+
+## Extract CAZy
+
+```{r Extract CAZy}
+
+RNA.ORFG.CAZy <- collapse.CAZy(colnames(RNA.expr), caz_file)
+protein.ORFG.CAZy <- collapse.CAZy(colnames(protein.expr), caz_file)
+
+write.table(RNA.ORFG.CAZy, paste0(wd, "results/RNA_ORFG_CAZy.txt"), quote=F, row.names=F)
+write.table(protein.ORFG.CAZy, paste0(wd, "results/protein_ORFG_CAZy.txt"), quote=F, row.names=F)
+
+```
+
+## Print longest ORFG
+
+```{r Print longest ORFG}
+
+a <- unlist(lapply(strsplit(colnames(protein.expr), ";"), function(x) length(x)))
+long_ORFG <- colnames(protein.expr)[a==max(a)]
+
+long_ORFG
+
+```

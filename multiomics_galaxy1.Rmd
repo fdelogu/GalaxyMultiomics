@@ -1,0 +1,237 @@
+---
+title: "Multiomics1"
+author: "fdelogu"
+date: '`r format(Sys.time(), "%d %B, %Y")`'
+output: pdf_document
+---
+
+```{r Load r libraries, results='hide', message=F, warning=F}
+
+library(tidyverse)
+library(matrixStats)
+
+options(stringsAsFactors=F)
+
+wd <- paste0(getwd(), "/")
+
+```
+
+## Load data
+
+```{r Load data}
+
+LFQprot <- read.table(paste0(wd, "Galaxy303-Protein_Groups.txt"),
+                                header=T, row.names=1, sep="\t") %>%
+  select(starts_with("LFQ.")) %>%
+  `colnames<-`(unlist(str_split(colnames(.), "\\."))[1:ncol(.)*3])
+
+uniques.prot <- read.table(paste0(wd, "Galaxy303-Protein_Groups.txt"),
+                                header=T, row.names=1, sep="\t") %>%
+  select(starts_with("unique.peptides.")) %>%
+  `colnames<-`(unlist(str_split(colnames(.), "\\."))[1:ncol(.)*3])
+
+RNA.mat <- read_tsv(paste0(wd, "Kallisto_abundances_all.txt"), col_names=T) %>%
+  column_to_rownames(var="target_id") %>%
+  select(ends_with("tpm")) %>%
+  `colnames<-`(toupper(unlist(str_split(colnames(.), "__"))[1:ncol(.)*2-1]))
+
+gene_map <- read_tsv(paste0(wd, "gene_map.txt"), col_names=F) %>%
+  `colnames<-`(c("ORF", "ORF_alias", "contig", "Bin")) %>%
+  mutate(Bin=replace_na(Bin, "Unbinned"))
+
+```
+
+## Remove decoys from MP
+
+```{r filter decoys}
+
+filter_decoys <- function(x){
+  y <- unlist(str_split(x, ";"))
+  y <- unlist(y[!grepl("REV", y) & !grepl("CON", y)])
+  if(length(y)==0){
+    warning(paste0("Empty name for ", x))
+    y <- paste0("to_remove;", x)
+  }
+  return(paste(y, collapse=";"))
+}
+
+rownames(LFQprot) <- lapply(rownames(LFQprot), filter_decoys)
+rownames(uniques.prot) <- rownames(LFQprot)
+
+LFQprot <- LFQprot[!grepl("to_remove", rownames(LFQprot)),]
+uniques.prot <- uniques.prot[!grepl("to_remove", rownames(uniques.prot)),]
+
+```
+
+## Filter functions
+
+```{r Filter functions}
+unique_hits_threshold <- function(mat, x=1){
+  return(matrix((mat>=x)+0, ncol=ncol(mat), nrow=nrow(mat), dimnames=list(rownames(mat), colnames(mat))))
+}
+
+samples_threshold <- function(mat, x=1){
+  return(rownames(mat)[which(rowSums(mat)>=x)])
+}
+
+grouping_sequences <- function(mus, uniques, h=0, s=1){
+  rel <- samples_threshold(unique_hits_threshold(uniques, h), s)
+  nohits <- rownames(mus)[which(!rownames(mus)%in%rel)]
+  
+  hits <- samples_threshold(unique_hits_threshold(10**mus))
+  unrel <- hits[which(!hits%in%rel)]
+  noexpr <- nohits[which(!nohits%in%hits)]
+  
+  rel.multi <- rel[grepl(";", rel)] # rel[grepl("_.*_", rel)]
+  rel.sin <- rel[!rel%in%rel.multi]
+  
+  unrel.multi <- unrel[grepl(";", unrel)] # unrel[grepl("_.*_", unrel)]
+  unrel.sin <- unrel[!unrel%in%unrel.multi]
+  
+  noexpr.multi <- noexpr[grepl(";", noexpr)] # noexpr[grepl("_.*_", noexpr)]
+  noexpr.sin <- noexpr[!noexpr%in%noexpr.multi]
+  
+  return(list(rel.sin=rel.sin, rel.multi=rel.multi,
+              unrel.sin=unrel.sin, unrel.multi=unrel.multi,
+              noexpr.sin=noexpr.sin, noexpr.multi=noexpr.multi))
+}
+
+grouping_counts <- function(mus, uniques, h=0, s=1){
+  groups_list <- grouping_sequences(mus, uniques, h=h, s=s)
+  
+  return(matrix(c(length(groups_list$rel.sin), length(groups_list$rel.multi),
+                  length(groups_list$unrel.sin), length(groups_list$unrel.multi),
+                  length(groups_list$noexpr.sin), length(groups_list$noexpr.multi)),
+                ncol=3, dimnames=list(c("singleton", "multi"), c("rel", "no.rel", "no.expr"))))
+}
+
+```
+
+# Reliablity matrices and unique hits filter
+
+For the simple output of Kallisto there is no info about unique hits. Another tool should be added to compute groups of transcripts, such as mmseq. We will use here a threshold of 0 TPM per sample instead of the unique hits count just to check which samples have a trnascript signal.
+
+## MT
+
+```{r Reliability matrices MT, results='axis'}
+
+uniques.RNA <- RNA.mat
+uniques.RNA[uniques.RNA>0] <- 1
+rownames(uniques.RNA) <- rownames(RNA.mat)
+knitr::kable(grouping_counts(LFQprot, uniques.RNA))
+
+RNA.filt <- samples_threshold(unique_hits_threshold(uniques.RNA, 1), 4)
+uniques.RNA <- as.matrix(uniques.RNA[RNA.filt,])
+rownames(uniques.RNA[RNA.filt,]) <- rownames(RNA.mat[RNA.filt,])
+knitr::kable(grouping_counts(LFQprot[RNA.filt,], uniques.RNA))
+
+Tm <- RNA.mat[RNA.filt,]
+
+```
+
+## MP
+
+```{r Reliability matrices MP, results='axis'}
+
+uniques.prot <- as.matrix(uniques.prot)
+rownames(uniques.prot) <- rownames(LFQprot)
+knitr::kable(grouping_counts(LFQprot, uniques.prot))
+
+pept.filt <- samples_threshold(unique_hits_threshold(uniques.prot, 1), 4)
+uniques.prot <- as.matrix(uniques.prot[pept.filt,])
+rownames(uniques.prot[pept.filt,]) <- rownames(LFQprot[pept.filt,])
+knitr::kable(grouping_counts(LFQprot[pept.filt,], uniques.prot))
+
+Pm <- LFQprot[pept.filt,]
+
+```
+
+# Expression filters
+
+## MT
+
+```{r MT expression filter}
+
+plot(density(as.matrix(log10(Tm+1))))
+abline(v=.75, col="red")
+RNA.expr <- log10(exp(t(Tm)))[,which(colMins(as.matrix(log10(t(Tm)+1)))>.75)]
+
+```
+
+## MP
+
+```{r MP expression filter}
+
+plot(density(as.matrix(log10(Pm+1))))
+abline(v=5, col="red")
+protein.expr <- log10(t(as.matrix(Pm))+1)[,which(colMins(as.matrix(log10(t(Pm)+1)))>5)]
+
+```
+
+# Expression comparison
+
+## Intersection selection
+
+```{r intersection}
+
+## Check how many are in common after filtering
+shared_names <- colnames(RNA.expr)[which(colnames(RNA.expr)%in%colnames(protein.expr))]
+
+## Subset the 2 dataset only with shared names
+RNA.expr_shared <- RNA.expr[,shared_names]
+protein.expr_shared <- protein.expr[,shared_names]
+
+## Subset the 2 dataset only with private names
+RNA.names_private <- colnames(RNA.expr)[!colnames(RNA.expr)%in%shared_names]
+protein.names_private <- colnames(protein.expr)[!colnames(protein.expr)%in%shared_names]
+
+## ORFs and ORFGs
+
+shared_names.ORFGs <- shared_names[grepl(";", shared_names)] # shared_names[grepl("_.*_", shared_names)]
+shared_names.ORFs <- shared_names[!shared_names%in%shared_names.ORFGs]
+RNA.names_private.ORFGs <- RNA.names_private[grepl(";", RNA.names_private)] # RNA.names_private[grepl("_.*_", RNA.names_private)]
+RNA.names_private.ORFs <- RNA.names_private[!RNA.names_private%in%RNA.names_private.ORFGs]
+protein.names_private.ORFGs <- protein.names_private[grepl(";", protein.names_private)] # protein.names_private[grepl("_.*_", protein.names_private)]
+pretein.names_private.ORFs <- protein.names_private[!protein.names_private%in%protein.names_private.ORFGs]
+
+## Intersection table
+
+intersection_table <- matrix(c(length(RNA.names_private.ORFs), length(shared_names.ORFs), length(pretein.names_private.ORFs),
+                               length(RNA.names_private.ORFGs), length(shared_names.ORFGs), length(protein.names_private.ORFGs)),
+                             byrow=T, nrow=2)
+colnames(intersection_table) <-c("MT", "MT&MP", "MP")
+rownames(intersection_table) <- c("ORFs", "ORFGs")
+
+## Sared time points
+shared_times <- rownames(RNA.expr)[which(rownames(RNA.expr)%in%rownames(protein.expr))]
+
+knitr::kable(intersection_table)
+
+```
+
+# Print expression tables
+
+Print the filtered expression tables. If the "results" folder exists already you will get a warning.
+
+```{r print tables}
+
+dir.create(file.path(wd, "results"))
+
+ORF_converter <- gene_map$ORF_alias
+names(ORF_converter) <- gene_map$ORF
+
+for(i in 1:ncol(RNA.expr)){
+  colnames(RNA.expr)[i] <- paste0(ORF_converter[unlist(str_split(colnames(RNA.expr)[i], ";"))], collapse=";")
+}
+for(i in 1:ncol(protein.expr)){
+  colnames(protein.expr)[i] <- paste0(ORF_converter[unlist(str_split(colnames(protein.expr)[i], ";"))], collapse=";")
+}
+
+#colnames(RNA.expr) <- ORF_converter[colnames(RNA.expr)]
+#colnames(protein.expr) <- ORF_converter[colnames(protein.expr)]
+
+write.csv(RNA.expr, file=paste(wd, "results/RNA_", "ALL",".csv", sep=""), quote=F, row.names=T)
+write.csv(protein.expr, file=paste(wd, "results/protein_", "ALL",".csv", sep=""), quote=F, row.names=T)
+
+```
+
