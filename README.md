@@ -15,7 +15,7 @@ The required files to run the analysis are:
 ## Output
 The analysis produces the aggregated tables according to MT/MP-ORF groups and a summary functional plot per 'omics per bin per functional class.
 
-![alt text](/results/MO_Kegg.pdf)
+![alt text](/results/MO_Kegg.png)
 
 ## Relevant literature
 - Mehta S, Crane M, Leith E et al. ASaiM-MT: a validated and optimized ASaiM workflow for metatranscriptomics analysis within Galaxy framework. F1000Research 10:103 (2021). 
