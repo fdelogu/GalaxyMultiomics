@@ -3,7 +3,7 @@
 This repository contains the R-based scripts for preliminary data analysis and visualization following the [ASaiM pipeline](https://f1000research.com/articles/10-103) in Galaxy. This project, **Multi-omic informatics for characterizing microbiomes and their role in health, disease and environment** was part of the Norwegian Centennial Chair Program, supported by the Norwegian University of Life Sciences (NMBU), the University of Oslo (UiO) and the University of Minnesota (UM).
 
 ## Intro
-The (metagenomics, metatranscriptomics)[https://www.ncbi.nlm.nih.gov/sra/?term=SRP134228] and (metaproteomics)[https://www.ebi.ac.uk/pride/archive/projects/PXD016242] data from the simplistic microbial community SEM1b were processed with the ASaiM pipeline and the output files were used as input for this analysis.
+The [metagenomics, metatranscriptomics](https://www.ncbi.nlm.nih.gov/sra/?term=SRP134228) and [metaproteomics](https://www.ebi.ac.uk/pride/archive/projects/PXD016242) data from the simplistic microbial community SEM1b were processed with the ASaiM pipeline and the output files were used as input for this analysis.
 
 ## Input data
 The required files to run the analysis are:
